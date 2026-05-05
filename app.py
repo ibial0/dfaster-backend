@@ -1,69 +1,103 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import yt_dlp
+import requests
 
 app = Flask(__name__)
-# Allow cross-origin requests from frontend
+# Allow CORS for cross-origin requests
 CORS(app)
+
+def get_youtube_id(url):
+    # Extract the exact video ID from any format of YouTube link
+    if 'youtu.be/' in url:
+        return url.split('youtu.be/')[1].split('?')[0]
+    elif 'v=' in url:
+        return url.split('v=')[1].split('&')[0]
+    elif 'shorts/' in url:
+        return url.split('shorts/')[1].split('?')[0]
+    return None
 
 @app.route('/', methods=['GET'])
 def home():
-    return jsonify({"status": "Success", "message": "DFASTER Backend Engine is Running!"})
+    return jsonify({"status": "Success", "message": "DFASTER API Engine is Running!"})
 
 @app.route('/api/get-info', methods=['POST'])
 def get_video_info():
     data = request.get_json()
     video_url = data.get('url', '').strip()
 
-    if not video_url:
-        return jsonify({"error": "No URL provided"}), 400
+    video_id = get_youtube_id(video_url)
+    if not video_id:
+        return jsonify({"error": "Invalid YouTube URL format."}), 400
 
-    # Clean the URL
-    if '?si=' in video_url:
-        video_url = video_url.split('?si=')[0]
-        
-    if 'youtu.be/' in video_url:
-        video_id = video_url.split('youtu.be/')[1].split('?')[0]
-        video_url = f'https://www.youtube.com/watch?v={video_id}'
+    # Using public proxy instances to completely bypass YouTube Bot Protection
+    instances = [
+        "https://inv.tux.pizza",
+        "https://invidious.nerdvpn.de",
+        "https://vid.puffyan.us",
+        "https://invidious.privacydev.net"
+    ]
 
-    # Bypass bot protection by impersonating an Android client
-    ydl_opts = {
-        'skip_download': True,
-        'quiet': True,
-        'no_warnings': True,
-        'geo_bypass': True,
-        'nocheckcertificate': True,
-        'extractor_args': {'youtube': ['player_client=android']}
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = ydl.extract_info(video_url, download=False)
+    for instance in instances:
+        try:
+            api_url = f"{instance}/api/v1/videos/{video_id}"
+            response = requests.get(api_url, timeout=10)
             
-            response_data = {
-                "title": info_dict.get('title', 'Unknown Title'),
-                "thumbnail": info_dict.get('thumbnail', ''),
-                "duration": info_dict.get('duration_string', 'Unknown'),
-                "formats": []
-            }
+            if response.status_code == 200:
+                info = response.json()
+                
+                # Fetch highest quality thumbnail
+                thumbnails = info.get('videoThumbnails', [])
+                thumb_url = thumbnails[0]['url'] if thumbnails else ''
+                for t in thumbnails:
+                    if t.get('quality') == 'maxresdefault':
+                        thumb_url = t.get('url')
+                        break
 
-            for f in info_dict.get('formats', []):
-                if f.get('filesize') or f.get('filesize_approx'):
-                    size_mb = round((f.get('filesize') or f.get('filesize_approx')) / (1024 * 1024), 2)
+                response_data = {
+                    "title": info.get('title', 'Unknown Title'),
+                    "thumbnail": thumb_url,
+                    "formats": []
+                }
+
+                # 1. Process High Quality Adaptive Formats
+                for f in info.get('adaptiveFormats', []):
+                    size_bytes = int(f.get('clen', 0))
+                    if size_bytes > 0:
+                        size_mb = round(size_bytes / (1024 * 1024), 2)
+                        type_info = f.get('type', '')
+                        
+                        is_audio = 'audio' in type_info
+                        resolution = 'Audio Only' if is_audio else f.get('qualityLabel', 'Unknown')
+                        
+                        response_data["formats"].append({
+                            "resolution": resolution,
+                            "size": f"{size_mb} MB",
+                            "ext": f.get('container', 'mp4'),
+                            "url": f.get('url'),
+                            "vcodec": 'none' if is_audio else ''
+                        })
+                
+                # 2. Process Standard & Legacy Formats (like 3GP)
+                for f in info.get('formatStreams', []):
+                    resolution = f.get('qualityLabel', 'Unknown')
+                    ext = f.get('container', 'mp4')
+                    
                     response_data["formats"].append({
-                        "format_id": f.get('format_id'),
-                        "ext": f.get('ext'),
-                        "resolution": f.get('resolution', 'Audio Only'),
-                        "size": f"{size_mb} MB",
+                        "resolution": resolution,
+                        "size": "Fast DL", 
+                        "ext": ext,
                         "url": f.get('url'),
-                        "vcodec": f.get('vcodec'),
-                        "acodec": f.get('acodec')
+                        "vcodec": ''
                     })
 
-            return jsonify(response_data)
+                if len(response_data["formats"]) > 0:
+                    return jsonify(response_data)
+                    
+        except Exception as e:
+            # If one proxy fails, seamlessly try the next one
+            continue
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"error": "API Servers are currently busy. Please try again."}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
