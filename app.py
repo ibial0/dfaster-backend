@@ -13,19 +13,27 @@ def home():
 @app.route('/api/get-info', methods=['POST'])
 def get_video_info():
     data = request.get_json()
-    video_url = data.get('url', '')
+    video_url = data.get('url', '').strip()
 
     if not video_url:
         return jsonify({"error": "No URL provided"}), 400
 
-    # Remove tracking parameters like ?si= from the YouTube URL
+    # Remove tracking parameters
     if '?si=' in video_url:
         video_url = video_url.split('?si=')[0]
+        
+    # Convert mobile short links (youtu.be) to standard links
+    if 'youtu.be/' in video_url:
+        video_id = video_url.split('youtu.be/')[1].split('?')[0]
+        video_url = f'https://www.youtube.com/watch?v={video_id}'
 
+    # Advanced options to bypass YouTube blocks
     ydl_opts = {
         'skip_download': True,
         'quiet': True,
         'no_warnings': True,
+        'geo_bypass': True,
+        'nocheckcertificate': True,
     }
 
     try:
@@ -55,6 +63,7 @@ def get_video_info():
             return jsonify(response_data)
 
     except Exception as e:
+        # Return the exact error to the frontend for debugging
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
