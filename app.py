@@ -3,7 +3,7 @@ from flask_cors import CORS
 import yt_dlp
 
 app = Flask(__name__)
-# Allow CORS for cross-origin requests
+# Allow cross-origin requests from frontend
 CORS(app)
 
 @app.route('/', methods=['GET'])
@@ -18,22 +18,22 @@ def get_video_info():
     if not video_url:
         return jsonify({"error": "No URL provided"}), 400
 
-    # Remove tracking parameters
+    # Clean the URL
     if '?si=' in video_url:
         video_url = video_url.split('?si=')[0]
         
-    # Convert mobile short links (youtu.be) to standard links
     if 'youtu.be/' in video_url:
         video_id = video_url.split('youtu.be/')[1].split('?')[0]
         video_url = f'https://www.youtube.com/watch?v={video_id}'
 
-    # Advanced options to bypass YouTube blocks
+    # Bypass bot protection by impersonating an Android client
     ydl_opts = {
         'skip_download': True,
         'quiet': True,
         'no_warnings': True,
         'geo_bypass': True,
         'nocheckcertificate': True,
+        'extractor_args': {'youtube': ['player_client=android']}
     }
 
     try:
@@ -63,7 +63,6 @@ def get_video_info():
             return jsonify(response_data)
 
     except Exception as e:
-        # Return the exact error to the frontend for debugging
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
